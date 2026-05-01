@@ -1,0 +1,326 @@
+# CyberGeeks UNILAG — Teaching Log
+
+Curriculum I'm actively delivering to the community.
+Updated as we go.
+
+---
+
+## Module 01 — Incident Response ✅ (Current)
+
+**Topics covered:**
+- PICERL framework in practice
+- Linux-based IR workflow — identification, containment, evidence collection
+- Order of volatility and chain of custody
+- Key Linux artifacts: auth.log, syslog, /tmp, crontab, bash_history, /proc
+- Live evidence capture — RAM acquisition with LiME, disk imaging with dd
+- Log analysis and filtering with grep, awk, ss, lsof
+- Simulating and responding to a live incident in a lab environment
+- IR report writing
+
+**Tools used:** Parrot OS, LiME, dd, ss, lsof, grep, awk
+
+**Lab:** Simulate attacker persistence (hidden file, cron job, rogue user) then 
+respond using only Linux CLI tools
+
+
+# Incident Response — Full Learning Note
+
+## What Is Incident Response?
+
+Incident Response is the structured process of detecting, containing,
+investigating, and recovering from a security incident. An incident is
+any event that threatens the confidentiality, integrity, or availability
+of a system or its data — ransomware, unauthorized access, data
+exfiltration, insider threat, malware infection.
+
+The goal of IR is not just to stop the attack. It is to:
+- Understand exactly what happened and how
+- Preserve evidence before it disappears
+- Remove the threat completely
+- Prevent recurrence
+- Document everything
+
+
+## The PICERL Framework
+
+Every IR follows this lifecycle. Skip a phase and you'll regret it.
+
+PREPARATION
+Before any incident occurs. This is your foundation.
+- Define what an "incident" is for your organization
+- Build playbooks for common scenarios (ransomware, phishing, insider threat)
+- Set up logging and monitoring so you have data to work with
+- Know your escalation path and who to contact
+- Have your tools ready before you need them
+
+IDENTIFICATION
+Something triggered. Determine: real incident or false positive?
+- Gather initial indicators — logs, alerts, user reports
+- Correlate events across systems — one weird log is noise,
+  the same entry across ten machines is signal
+- Determine scope — what systems are affected?
+- Assign severity — how bad is this?
+- Declare the incident so the response clock starts
+
+CONTAINMENT
+Stop the bleeding. Do not let it spread.
+- Short-term: kill the process, block the IP, lock the account
+- Long-term: isolate the affected system from the network entirely
+- Critical rule: NEVER eradicate before collecting evidence.
+  Containment preserves the crime scene. Eradication cleans it.
+
+ERADICATION
+Remove the threat completely.
+- Delete malware and all its components
+- Remove backdoors, rogue accounts, malicious scheduled tasks
+- Patch the exploited vulnerability
+- Identify root cause first — if you don't know how they got in,
+  you can't be sure you've removed everything
+
+RECOVERY
+Restore systems to normal operation.
+- Rebuild from clean backups or known-good images where possible
+- Monitor closely post-recovery — attackers leave secondary persistence
+- Confirm the threat is gone before declaring the incident closed
+
+LESSONS LEARNED
+The phase most people skip. Don't.
+- Write the post-incident report within 72 hours
+- What happened? How? What did you miss? What would have caught it earlier?
+- Update playbooks, detection rules, and monitoring accordingly
+
+
+## Key Concepts
+
+ORDER OF VOLATILITY
+Collect evidence in this order — most volatile first:
+RAM → Swap/Pagefile → Running Processes → Network Connections → Open Files → Disk
+
+RAM disappears the moment power is cut. Disk survives indefinitely.
+Always collect in volatility order or you lose evidence before you
+know you needed it.
+
+CHAIN OF CUSTODY
+Every piece of evidence must be:
+- Hashed (SHA256) immediately upon collection
+- Documented every time it is accessed or transferred
+- Stored in a way that prevents tampering
+
+If the hash changes at any point, the evidence is compromised.
+
+TRUE POSITIVE VS FALSE POSITIVE
+A true positive is a real attack.
+A false positive is legitimate activity that looks suspicious.
+Telling them apart quickly is the core L1 SOC analyst skill.
+Bad triage wastes hours chasing ghosts — or worse, ignoring real incidents.
+
+
+## Linux IR in Practice
+
+WHERE YOUR EVIDENCE LIVES
+
+/var/log/auth.log       — all logins, SSH sessions, sudo commands
+/var/log/syslog         — general system events
+/tmp /var/tmp /dev/shm  — attacker drop zones, world-writable
+/etc/crontab            — scheduled tasks, classic persistence location
+/etc/passwd /etc/shadow — user accounts, look for unexpected additions
+~/.bash_history         — command history, attackers often wipe this
+/proc/                  — live kernel data, disappears on reboot
+
+
+## Identification Commands
+
+# Who is logged in right now?
+w
+who
+last -n 20
+
+# Full process tree with parent-child relationships
+ps auxf
+
+# All network connections with the process behind them
+ss -tulnp
+ss -antp
+
+# Suspicious files in attacker-favourite locations
+find /tmp /var/tmp /dev/shm -type f -ls 2>/dev/null
+
+# Files modified in the last 24 hours
+find / -mtime -1 -type f 2>/dev/null | grep -v proc
+
+# Cron jobs — current user and system-wide
+crontab -l
+cat /etc/crontab
+ls -la /etc/cron.*
+
+# All open files and the processes holding them
+sudo lsof
+
+
+## Containment Commands
+
+# Kill a malicious process (get PID from ps auxf first)
+kill -9 <PID>
+
+# Block a malicious IP
+sudo iptables -A INPUT -s <IP> -j DROP
+sudo iptables -A OUTPUT -d <IP> -j DROP
+sudo iptables -L -n -v
+
+# Take a network interface offline
+sudo ip link set eth0 down
+
+# Lock a compromised user account
+sudo usermod -L <username>
+sudo passwd -l <username>
+
+
+## Evidence Collection Commands
+
+--- RAM Acquisition ---
+
+sudo apt install build-essential linux-headers-$(uname -r) -y
+git clone https://github.com/504ensicsLabs/LiME.git
+cd LiME/src && make
+sudo insmod lime-$(uname -r).ko "path=/home/frost/evidence/ram.lime format=lime"
+sha256sum /home/frost/evidence/ram.lime > /home/frost/evidence/ram.lime.sha256
+
+--- Volatile State Capture ---
+
+mkdir -p ~/evidence/volatile
+
+ps auxf > ~/evidence/volatile/processes.txt
+ss -antp > ~/evidence/volatile/connections.txt
+netstat -rn > ~/evidence/volatile/routing.txt
+w > ~/evidence/volatile/users.txt
+last -n 50 > ~/evidence/volatile/login_history.txt
+sudo lsof > ~/evidence/volatile/open_files.txt
+cat /proc/*/cmdline 2>/dev/null | strings > ~/evidence/volatile/cmdlines.txt
+sha256sum ~/evidence/volatile/* > ~/evidence/volatile/HASHES.txt
+
+--- Disk Imaging ---
+
+sudo dd if=/dev/sdb of=~/evidence/disk.img bs=4M status=progress conv=noerror,sync
+sha256sum ~/evidence/disk.img > ~/evidence/disk.img.sha256
+sudo mount -o ro,loop ~/evidence/disk.img /mnt/evidence
+
+
+## Log Analysis Commands
+
+# All failed logins
+sudo grep "Failed password" /var/log/auth.log
+
+# Top IPs brute-forcing SSH
+sudo grep "Failed password" /var/log/auth.log | awk '{print $11}' | sort | uniq -c | sort -rn | head 20
+
+# Successful logins only
+sudo grep "Accepted" /var/log/auth.log
+
+# All sudo commands run on the system
+sudo grep "sudo" /var/log/auth.log
+
+# Check if bash history was tampered with
+echo $HISTFILE
+cat ~/.bash_history
+
+
+## Simulated Incident Lab
+
+--- Attacker Role: Plant the artifacts ---
+
+echo '#!/bin/bash
+while true; do curl http://192.168.1.99/beacon; sleep 60; done' > /tmp/.hidden_backdoor.sh
+chmod +x /tmp/.hidden_backdoor.sh
+(crontab -l 2>/dev/null; echo "*/5 * * * * /tmp/.hidden_backdoor.sh") | crontab -
+sudo useradd -m -s /bin/bash rogue_user
+
+--- Responder Role: Find everything without being told where to look ---
+
+find /tmp -name ".*" -type f
+crontab -l
+cat /etc/passwd | tail -10
+ss -antp | grep ESTABLISHED
+
+--- Eradication ---
+
+rm /tmp/.hidden_backdoor.sh
+crontab -r
+sudo userdel -r rogue_user
+
+
+## IR Report Template
+
+INCIDENT REPORT
+═══════════════════════════════════════
+
+Date/Time Detected:
+Detected By:
+Severity (P1/P2/P3):
+
+IDENTIFICATION
+──────────────
+What happened:
+Affected systems:
+First indicator of compromise:
+Attack timeline:
+
+CONTAINMENT
+───────────
+Actions taken:
+Time to containment:
+
+EVIDENCE COLLECTED
+──────────────────
+Artifacts collected:
+SHA256 hashes:
+Storage location:
+
+ROOT CAUSE
+──────────
+How the attacker got in:
+What vulnerability was exploited:
+
+ERADICATION
+───────────
+What was removed:
+Patches applied:
+
+RECOVERY
+────────
+How systems were restored:
+Post-recovery monitoring:
+
+LESSONS LEARNED
+───────────────
+What detection was missed:
+What rule/playbook needs updating:
+What would have caught this earlier:
+
+
+## Recommended Resources
+
+READING
+- NIST SP 800-61 Rev 2 — free PDF from nist.gov (industry standard IR guide)
+- CISA IR Playbooks — free real-world templates at cisa.gov
+
+PRACTICE LABS
+- CyberDefenders — free blueteam CTF challenges with real logs and memory dumps
+- Blue Team Labs Online — guided IR scenarios
+- EVTX-ATTACK-SAMPLES on GitHub — real Windows attack logs to practice on
+
+YOUTUBE
+- Simply Cyber — search "incident response process" by Gerald Auger
+- 13Cubed — Linux forensics and artifact analysis
+- MyDFIR — practical SOC and IR walkthroughs
+
+---
+
+## Coming Next
+- Module 02 — Threat Hunting
+- Module 03 — Digital Forensics
+- Module 04 — Network Security Monitoring
+- Module 05 — SIEM & Log Analysis
+- Module 06 — Malware Analysis
+- Module 07 — Web Application Security
+- Module 08 — Phishing Analysis
+
