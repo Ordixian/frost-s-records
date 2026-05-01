@@ -1,6 +1,6 @@
 # Hey, I'm Frost 👋
 
-Geology & Geophysics student at the University of Lagos, building a parallel 
+Geology student at the University of Lagos, building a parallel 
 career in cybersecurity engineering — one lab, one bug, one writeup at a time.
 
 ## What I Do
